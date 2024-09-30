@@ -6,29 +6,47 @@ video = cv2.VideoCapture(0)
 
 # Pre-processamento da imagem
 def preProcess(img):
-    # Convertendo para escala de cinza
-    imgGray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # Aplicando o desfoque gaussiano para suavizar a imagem
-    imgBlur = cv2.GaussianBlur(imgGray, (15, 15), 0)
-    # Aplicando o limiar binário inverso para separar o fundo das moedas
-    _, imgThresh = cv2.threshold(imgBlur, 130, 255, cv2.THRESH_BINARY_INV)
-    # Usando erosão para reduzir as áreas de contato entre moedas
+    
+    imgGray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) #BGR para preto e branco , opencv interpreta a imagem em bgr 
+    imgBlur = cv2.GaussianBlur(imgGray, (15, 15), 0) #filtro gaussiano de desfoque para reduzir ruidos 
+    _, imgThresh = cv2.threshold(imgBlur, 130, 255, cv2.THRESH_BINARY_INV) #threshold binario inverso, pois geralmente as moedas sao mais escuras que o fundo
+    return imgThresh
+
+# Separar objetos conectados com a Transformada de Distância
+def separate_connected_objects(imgPre):
+    # Aplicar a Transformada de Distância
+    dist_transform = cv2.distanceTransform(imgPre, cv2.DIST_L2, 5) #calcula a distancia de cada pixel branco ate o pixel preto mais proximo, distancia euclidiana onde os centros tem valores mais altos 
+    # Normalizar e aplicar um limiar para detectar os picos (centros das moedas)
+    _, sure_fg = cv2.threshold(dist_transform, 0.5 * dist_transform.max(), 255, 0)
+    sure_fg = np.uint8(sure_fg)
+    
+    # Aumentar as áreas de fundo
     kernel = np.ones((3, 3), np.uint8)
-    imgEroded = cv2.erode(imgThresh, kernel, iterations=2)
-    # Aplicando uma leve dilatação para restaurar as moedas após a erosão
-    imgProcessed = cv2.dilate(imgEroded, kernel, iterations=2)
-    return imgProcessed
+    sure_bg = cv2.dilate(imgPre, kernel, iterations=3)
+    unknown = cv2.subtract(sure_bg, sure_fg)
+
+    # Marcar as moedas com base nos centros detectados
+    _, markers = cv2.connectedComponents(sure_fg)
+    markers = markers + 1
+    markers[unknown == 255] = 0
+
+    # Aplicar Watershed para separar objetos conectados
+    img3 = cv2.cvtColor(imgPre, cv2.COLOR_GRAY2BGR)
+    markers = cv2.watershed(img3, markers)
+    imgPre[markers == -1] = 0  # Marcar as bordas
+
+    return imgPre
 
 # Função para filtrar contornos baseados em área e circularidade
 def is_coin(contour):
     area = cv2.contourArea(contour)
-    if area < 500 or area > 3000:  # Ajuste esses valores conforme o tamanho das moedas
+    if area < 500 or area > 3000:
         return False
     
     perimeter = cv2.arcLength(contour, True)
     circularity = 4 * np.pi * (area / (perimeter ** 2))
     
-    if circularity > 0.7:  # Um valor próximo de 1 indica uma forma mais circular
+    if circularity > 0.7:
         return True
     return False
 
@@ -38,6 +56,9 @@ while True:
     
     # Pre-processa a imagem
     imgPre = preProcess(img)
+
+    # Separar moedas conectadas
+    imgPre = separate_connected_objects(imgPre)
 
     # Detecta contornos
     contours, _ = cv2.findContours(imgPre, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
